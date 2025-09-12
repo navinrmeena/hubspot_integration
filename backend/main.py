@@ -6,9 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 # Load environment variables
 load_dotenv()
 
-from integrations.airtable import authorize_airtable, get_items_airtable, oauth2callback_airtable, get_airtable_credentials
+from integrations.airtable import authorize_airtable, get_items_airtable, oauth2callback_airtable, get_airtable_credentials, create_record_airtable, get_airtable_bases_and_tables
 from integrations.notion import authorize_notion, get_items_notion, oauth2callback_notion, get_notion_credentials
-from integrations.hubspot import authorize_hubspot, get_hubspot_credentials, get_items_hubspot, oauth2callback_hubspot
+from integrations.hubspot import authorize_hubspot, get_hubspot_credentials, get_items_hubspot, oauth2callback_hubspot, create_contact_hubspot, get_contact_hubspot, update_contact_hubspot, delete_contact_hubspot
 
 app = FastAPI()
 
@@ -46,6 +46,16 @@ async def get_airtable_credentials_integration(user_id: str = Form(...), org_id:
 async def get_airtable_items(credentials: str = Form(...)):
     return await get_items_airtable(credentials)
 
+@app.post('/integrations/airtable/bases')
+async def get_airtable_bases(credentials: str = Form(...)):
+    return await get_airtable_bases_and_tables(credentials)
+
+@app.post('/integrations/airtable/create_record')
+async def create_airtable_record(credentials: str = Form(...), base_id: str = Form(...), table_id: str = Form(...), record_data: str = Form(...)):
+    import json
+    record_data_dict = json.loads(record_data)
+    return await create_record_airtable(credentials, base_id, table_id, record_data_dict)
+
 
 # Notion
 @app.post('/integrations/notion/authorize')
@@ -80,3 +90,24 @@ async def get_hubspot_credentials_integration(user_id: str = Form(...), org_id: 
 @app.post('/integrations/hubspot/get_hubspot_items')
 async def load_slack_data_integration(credentials: str = Form(...)):
     return await get_items_hubspot(credentials)
+
+@app.post('/integrations/hubspot/create_contact')
+async def create_hubspot_contact(credentials: str = Form(...), contact_data: str = Form(...)):
+    import json
+    contact_data_dict = json.loads(contact_data)
+    return await create_contact_hubspot(credentials, contact_data_dict)
+
+@app.post('/integrations/hubspot/get_contact')
+async def get_hubspot_contact(credentials: str = Form(...), contact_id: str = Form(...)):
+    return await get_contact_hubspot(credentials, contact_id)
+
+@app.post('/integrations/hubspot/update_contact')
+async def update_hubspot_contact(credentials: str = Form(...), contact_id: str = Form(...), contact_data: str = Form(...)):
+    import json
+    contact_data_dict = json.loads(contact_data)
+    return await update_contact_hubspot(credentials, contact_id, contact_data_dict)
+
+@app.post('/integrations/hubspot/delete_contact')
+async def delete_hubspot_contact(credentials: str = Form(...), contact_id: str = Form(...)):
+    result = await delete_contact_hubspot(credentials, contact_id)
+    return {"success": result}

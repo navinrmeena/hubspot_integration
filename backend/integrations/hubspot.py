@@ -141,3 +141,112 @@ async def get_items_hubspot(credentials) -> list[IntegrationItem]:
     else:
         print(f'Error fetching HubSpot items: {response.text}')
         return []
+
+async def create_contact_hubspot(credentials, contact_data) -> IntegrationItem:
+    """Create a new contact in HubSpot"""
+    credentials = json.loads(credentials)
+    access_token = credentials.get('access_token')
+    
+    url = 'https://api.hubapi.com/crm/v3/objects/contacts'
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json'
+    }
+    
+    # Prepare contact properties
+    properties = {
+        'firstname': contact_data.get('firstname', ''),
+        'lastname': contact_data.get('lastname', ''),
+        'email': contact_data.get('email', ''),
+        'phone': contact_data.get('phone', ''),
+        'company': contact_data.get('company', '')
+    }
+    
+    payload = {
+        'properties': {k: v for k, v in properties.items() if v}  # Only include non-empty values
+    }
+    
+    response = requests.post(url, headers=headers, json=payload)
+    
+    if response.status_code == 201:
+        result = response.json()
+        # Create IntegrationItem from the created contact
+        integration_item = create_integration_item_metadata_object(result)
+        return integration_item
+    else:
+        print(f'Error creating HubSpot contact: {response.text}')
+        raise HTTPException(status_code=400, detail=f'Failed to create contact: {response.text}')
+
+async def get_contact_hubspot(credentials, contact_id) -> IntegrationItem:
+    """Get a specific contact from HubSpot"""
+    credentials = json.loads(credentials)
+    access_token = credentials.get('access_token')
+    
+    url = f'https://api.hubapi.com/crm/v3/objects/contacts/{contact_id}'
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json'
+    }
+    
+    response = requests.get(url, headers=headers)
+    
+    if response.status_code == 200:
+        result = response.json()
+        integration_item = create_integration_item_metadata_object(result)
+        return integration_item
+    else:
+        print(f'Error fetching HubSpot contact: {response.text}')
+        raise HTTPException(status_code=400, detail=f'Failed to fetch contact: {response.text}')
+
+async def update_contact_hubspot(credentials, contact_id, contact_data) -> IntegrationItem:
+    """Update a contact in HubSpot"""
+    credentials = json.loads(credentials)
+    access_token = credentials.get('access_token')
+    
+    url = f'https://api.hubapi.com/crm/v3/objects/contacts/{contact_id}'
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json'
+    }
+    
+    # Prepare contact properties
+    properties = {
+        'firstname': contact_data.get('firstname', ''),
+        'lastname': contact_data.get('lastname', ''),
+        'email': contact_data.get('email', ''),
+        'phone': contact_data.get('phone', ''),
+        'company': contact_data.get('company', '')
+    }
+    
+    payload = {
+        'properties': {k: v for k, v in properties.items() if v}  # Only include non-empty values
+    }
+    
+    response = requests.patch(url, headers=headers, json=payload)
+    
+    if response.status_code == 200:
+        result = response.json()
+        integration_item = create_integration_item_metadata_object(result)
+        return integration_item
+    else:
+        print(f'Error updating HubSpot contact: {response.text}')
+        raise HTTPException(status_code=400, detail=f'Failed to update contact: {response.text}')
+
+async def delete_contact_hubspot(credentials, contact_id) -> bool:
+    """Delete a contact from HubSpot"""
+    credentials = json.loads(credentials)
+    access_token = credentials.get('access_token')
+    
+    url = f'https://api.hubapi.com/crm/v3/objects/contacts/{contact_id}'
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json'
+    }
+    
+    response = requests.delete(url, headers=headers)
+    
+    if response.status_code == 204:
+        return True
+    else:
+        print(f'Error deleting HubSpot contact: {response.text}')
+        raise HTTPException(status_code=400, detail=f'Failed to delete contact: {response.text}')

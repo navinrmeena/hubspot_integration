@@ -168,3 +168,78 @@ async def get_items_airtable(credentials) -> list[IntegrationItem]:
 
     print(f'list_of_integration_item_metadata: {list_of_integration_item_metadata}')
     return list_of_integration_item_metadata
+
+async def create_record_airtable(credentials, base_id, table_id, record_data) -> IntegrationItem:
+    """Create a new record in Airtable"""
+    credentials = json.loads(credentials)
+    access_token = credentials.get('access_token')
+    
+    url = f'https://api.airtable.com/v0/{base_id}/{table_id}'
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json'
+    }
+    
+    # Prepare the record data
+    payload = {
+        'fields': record_data
+    }
+    
+    response = requests.post(url, headers=headers, json=payload)
+    
+    if response.status_code == 200:
+        result = response.json()
+        # Create IntegrationItem from the created record
+        integration_item = IntegrationItem(
+            id=result.get('id', ''),
+            type='Record',
+            name=record_data.get('Name', record_data.get('Title', 'Unnamed Record')),
+            creation_time=result.get('createdTime', None),
+            last_modified_time=result.get('createdTime', None),  # Airtable doesn't provide separate modified time for new records
+            parent_id=base_id + '_Base',
+            parent_path_or_name=table_id
+        )
+        return integration_item
+    else:
+        print(f'Error creating Airtable record: {response.text}')
+        raise HTTPException(status_code=400, detail=f'Failed to create record: {response.text}')
+
+async def get_airtable_bases_and_tables(credentials) -> dict:
+    """Get available bases and their tables for record creation"""
+    credentials = json.loads(credentials)
+    access_token = credentials.get('access_token')
+    
+    # Get bases
+    bases_url = 'https://api.airtable.com/v0/meta/bases'
+    bases_headers = {'Authorization': f'Bearer {access_token}'}
+    bases_response = requests.get(bases_url, headers=bases_headers)
+    
+    if bases_response.status_code != 200:
+        raise HTTPException(status_code=400, detail='Failed to fetch bases')
+    
+    bases_data = bases_response.json().get('bases', [])
+    bases_with_tables = {}
+    
+    for base in bases_data:
+        base_id = base.get('id')
+        base_name = base.get('name', 'Unnamed Base')
+        
+        # Get tables for this base
+        tables_url = f'https://api.airtable.com/v0/meta/bases/{base_id}/tables'
+        tables_response = requests.get(tables_url, headers=bases_headers)
+        
+        if tables_response.status_code == 200:
+            tables_data = tables_response.json().get('tables', [])
+            bases_with_tables[base_id] = {
+                'name': base_name,
+                'tables': [
+                    {
+                        'id': table.get('id'),
+                        'name': table.get('name', 'Unnamed Table'),
+                        'fields': table.get('fields', [])
+                    }
+                    for table in tables_data
+                ]
+            }
+    
+    return bases_with_tables
