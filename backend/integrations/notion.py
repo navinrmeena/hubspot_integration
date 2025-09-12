@@ -2,6 +2,7 @@
 
 import json
 import secrets
+import os
 from fastapi import Request, HTTPException
 from fastapi.responses import HTMLResponse
 import httpx
@@ -12,12 +13,19 @@ from integrations.integration_item import IntegrationItem
 
 from redis_client import add_key_value_redis, get_value_redis, delete_key_redis
 
-CLIENT_ID = 'XXX'
-CLIENT_SECRET = 'XXX'
+# Load environment variables
+CLIENT_ID = os.getenv('NOTION_CLIENT_ID')
+CLIENT_SECRET = os.getenv('NOTION_CLIENT_SECRET')
+
+if not CLIENT_ID or not CLIENT_SECRET:
+    raise ValueError("NOTION_CLIENT_ID and NOTION_CLIENT_SECRET must be set in environment variables")
+
 encoded_client_id_secret = base64.b64encode(f'{CLIENT_ID}:{CLIENT_SECRET}'.encode()).decode()
 
 REDIRECT_URI = 'http://localhost:8000/integrations/notion/oauth2callback'
-authorization_url = f'https://api.notion.com/v1/oauth/authorize?client_id={CLIENT_ID}&response_type=code&owner=user&redirect_uri=http%3A%2F%2Flocalhost%3A8000%2Fintegrations%2Fnotion%2Foauth2callback'
+# Notion OAuth scopes: read, insert, update
+SCOPE = 'read insert update'
+authorization_url = f'https://api.notion.com/v1/oauth/authorize?client_id={CLIENT_ID}&response_type=code&owner=user&redirect_uri={REDIRECT_URI}&scope={SCOPE}'
 
 async def authorize_notion(user_id, org_id):
     state_data = {
@@ -25,45 +33,79 @@ async def authorize_notion(user_id, org_id):
         'user_id': user_id,
         'org_id': org_id
     }
-    encoded_state = json.dumps(state_data)
-    await add_key_value_redis(f'notion_state:{org_id}:{user_id}', encoded_state, expire=600)
+    encoded_state = base64.urlsafe_b64encode(json.dumps(state_data).encode('utf-8')).decode('utf-8')
+    await add_key_value_redis(f'notion_state:{org_id}:{user_id}', json.dumps(state_data), expire=600)
 
     return f'{authorization_url}&state={encoded_state}'
 
 async def oauth2callback_notion(request: Request):
     if request.query_params.get('error'):
         raise HTTPException(status_code=400, detail=request.query_params.get('error'))
+    
     code = request.query_params.get('code')
     encoded_state = request.query_params.get('state')
-    state_data = json.loads(encoded_state)
+    
+    if not code or not encoded_state:
+        raise HTTPException(status_code=400, detail='Missing code or state parameter')
+    
+    try:
+        state_data = json.loads(base64.urlsafe_b64decode(encoded_state).decode('utf-8'))
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        raise HTTPException(status_code=400, detail=f'Invalid state parameter: {str(e)}')
 
     original_state = state_data.get('state')
     user_id = state_data.get('user_id')
     org_id = state_data.get('org_id')
 
+    if not user_id or not org_id:
+        raise HTTPException(status_code=400, detail='Missing user_id or org_id in state')
+
     saved_state = await get_value_redis(f'notion_state:{org_id}:{user_id}')
 
-    if not saved_state or original_state != json.loads(saved_state).get('state'):
+    if not saved_state:
+        raise HTTPException(status_code=400, detail='State not found or expired')
+    
+    saved_state_data = json.loads(saved_state)
+    if original_state != saved_state_data.get('state'):
         raise HTTPException(status_code=400, detail='State does not match.')
 
     async with httpx.AsyncClient() as client:
-        response, _ = await asyncio.gather(
-            client.post(
-                'https://api.notion.com/v1/oauth/token',
-                json={
-                    'grant_type': 'authorization_code',
-                    'code': code,
-                    'redirect_uri': REDIRECT_URI
-                }, 
-                headers={
-                    'Authorization': f'Basic {encoded_client_id_secret}',
-                    'Content-Type': 'application/json',
-                }
-            ),
-            delete_key_redis(f'notion_state:{org_id}:{user_id}'),
-        )
+        try:
+            response, _ = await asyncio.gather(
+                client.post(
+                    'https://api.notion.com/v1/oauth/token',
+                    json={
+                        'grant_type': 'authorization_code',
+                        'code': code,
+                        'redirect_uri': REDIRECT_URI
+                    }, 
+                    headers={
+                        'Authorization': f'Basic {encoded_client_id_secret}',
+                        'Content-Type': 'application/json',
+                    }
+                ),
+                delete_key_redis(f'notion_state:{org_id}:{user_id}'),
+            )
 
-    await add_key_value_redis(f'notion_credentials:{org_id}:{user_id}', json.dumps(response.json()), expire=600)
+            if response.status_code != 200:
+                error_detail = response.text
+                try:
+                    error_json = response.json()
+                    error_detail = error_json.get('error_description', error_json.get('error', error_detail))
+                except:
+                    pass
+                raise HTTPException(status_code=400, detail=f'Token exchange failed: {error_detail}')
+
+            token_data = response.json()
+            if 'access_token' not in token_data:
+                raise HTTPException(status_code=400, detail='No access token in response')
+
+            await add_key_value_redis(f'notion_credentials:{org_id}:{user_id}', json.dumps(token_data), expire=3600)  # 1 hour expiry
+            
+        except httpx.HTTPError as e:
+            raise HTTPException(status_code=500, detail=f'HTTP error during token exchange: {str(e)}')
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f'Unexpected error during token exchange: {str(e)}')
     
     close_window_script = """
     <html>
@@ -77,10 +119,16 @@ async def oauth2callback_notion(request: Request):
 async def get_notion_credentials(user_id, org_id):
     credentials = await get_value_redis(f'notion_credentials:{org_id}:{user_id}')
     if not credentials:
-        raise HTTPException(status_code=400, detail='No credentials found.')
-    credentials = json.loads(credentials)
-    if not credentials:
-        raise HTTPException(status_code=400, detail='No credentials found.')
+        raise HTTPException(status_code=404, detail='No credentials found. Please authorize first.')
+    
+    try:
+        credentials = json.loads(credentials)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=500, detail='Invalid credentials format')
+    
+    if not credentials or 'access_token' not in credentials:
+        raise HTTPException(status_code=404, detail='Invalid credentials. Please authorize again.')
+    
     await delete_key_redis(f'notion_credentials:{org_id}:{user_id}')
 
     return credentials
