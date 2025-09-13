@@ -1,0 +1,121 @@
+{
+  "info": {
+    "name": "Notion OAuth2 Test",
+    "description": "Test collection for Notion OAuth2 integration",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://127.0.0.1:8000/",
+          "protocol": "http",
+          "host": ["127", "0", "0", "1"],
+          "port": "8000",
+          "path": [""]
+        }
+      }
+    },
+    {
+      "name": "2. Notion - Start OAuth2 Authorization",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-www-form-urlencoded"
+          }
+        ],
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            {
+              "key": "user_id",
+              "value": "test_user_123",
+              "type": "text"
+            },
+            {
+              "key": "org_id",
+              "value": "test_org_456",
+              "type": "text"
+            }
+          ]
+        },
+        "url": {
+          "raw": "http://127.0.0.1:8000/integrations/notion/authorize",
+          "protocol": "http",
+          "host": ["127", "0", "0", "1"],
+          "port": "8000",
+          "path": ["integrations", "notion", "authorize"]
+        }
+      }
+    },
+    {
+      "name": "3. Notion - Get Credentials",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-www-form-urlencoded"
+          }
+        ],
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            {
+              "key": "user_id",
+              "value": "test_user_123",
+              "type": "text"
+            },
+            {
+              "key": "org_id",
+              "value": "test_org_456",
+              "type": "text"
+            }
+          ]
+        },
+        "url": {
+          "raw": "http://127.0.0.1:8000/integrations/notion/credentials",
+          "protocol": "http",
+          "host": ["127", "0", "0", "1"],
+          "port": "8000",
+          "path": ["integrations", "notion", "credentials"]
+        }
+      }
+    },
+    {
+      "name": "4. Notion - Load Data",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-www-form-urlencoded"
+          }
+        ],
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            {
+              "key": "credentials",
+              "value": "{\"access_token\": \"your_token_here\", \"token_type\": \"bearer\"}",
+              "type": "text"
+            }
+          ]
+        },
+        "url": {
+          "raw": "http://127.0.0.1:8000/integrations/notion/load",
+          "protocol": "http",
+          "host": ["127", "0", "0", "1"],
+          "port": "8000",
+          "path": ["integrations", "notion", "load"]
+        }
+      }
+    }
+  ]
+}
+
