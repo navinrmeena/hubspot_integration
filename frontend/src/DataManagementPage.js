@@ -26,11 +26,8 @@ import {
   Select,
   MenuItem,
   IconButton,
-  Tooltip,
-  Divider,
   Stack,
-  Avatar,
-  Badge
+  Avatar
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -44,6 +41,10 @@ import {
 import axios from 'axios';
 
 const DataManagementPage = () => {
+  // User configuration state
+  const [user, setUser] = useState('TestUser');
+  const [org, setOrg] = useState('TestOrg');
+  
   const [integrations, setIntegrations] = useState({
     hubspot: { 
       connected: false, 
@@ -156,8 +157,8 @@ const DataManagementPage = () => {
       setError(null);
       
       const formData = new FormData();
-      formData.append('user_id', 'TestUser');
-      formData.append('org_id', 'TestOrg');
+      formData.append('user_id', user);
+      formData.append('org_id', org);
       
       const response = await axios.post(
         `http://localhost:8000/integrations/${integrationType}/authorize`,
@@ -183,8 +184,8 @@ const DataManagementPage = () => {
   const handleWindowClosed = async (integrationType) => {
     try {
       const formData = new FormData();
-      formData.append('user_id', 'TestUser');
-      formData.append('org_id', 'TestOrg');
+      formData.append('user_id', user);
+      formData.append('org_id', org);
       
       const response = await axios.post(
         `http://localhost:8000/integrations/${integrationType}/credentials`,
@@ -219,23 +220,19 @@ const DataManagementPage = () => {
       setButtonLoading(integrationType, 'fetch', true);
       setError(null);
       
-      const credentials = integrations[integrationType].credentials;
       const formData = new FormData();
-      formData.append('credentials', JSON.stringify(credentials));
+      formData.append('credentials', JSON.stringify(integrations[integrationType].credentials));
       
-      let endpoint;
+      let response;
       if (integrationType === 'hubspot') {
-        endpoint = 'get_hubspot_items';
-      } else {
-        endpoint = 'load';
+        response = await axios.post('http://localhost:8000/integrations/hubspot/get_hubspot_items', formData);
+      } else if (integrationType === 'airtable') {
+        response = await axios.post('http://localhost:8000/integrations/airtable/load', formData);
+      } else if (integrationType === 'notion') {
+        response = await axios.post('http://localhost:8000/integrations/notion/load', formData);
       }
       
-      const response = await axios.post(
-        `http://localhost:8000/integrations/${integrationType}/${endpoint}`,
-        formData
-      );
-      
-      const data = response.data || [];
+      const data = response.data;
       
       setIntegrations(prev => ({
         ...prev,
@@ -249,7 +246,7 @@ const DataManagementPage = () => {
         }
       }));
       
-      setSuccess(`Fetched ${data.length} items from ${integrationConfig[integrationType].name}`);
+      setSuccess(`Data fetched successfully from ${integrationConfig[integrationType].name}!`);
       
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to fetch data');
@@ -257,36 +254,31 @@ const DataManagementPage = () => {
     }
   };
 
+  const handleDisconnect = (integrationType) => {
+    setIntegrations(prev => ({
+      ...prev,
+      [integrationType]: {
+        ...prev[integrationType],
+        connected: false,
+        credentials: null,
+        data: []
+      }
+    }));
+    setSuccess(`${integrationConfig[integrationType].name} disconnected successfully!`);
+  };
+
   const handleCreateContact = async () => {
     try {
       setButtonLoading('hubspot', 'create', true);
       setError(null);
       
-      const credentials = integrations.hubspot.credentials;
       const formData = new FormData();
-      formData.append('credentials', JSON.stringify(credentials));
+      formData.append('credentials', JSON.stringify(integrations.hubspot.credentials));
       formData.append('contact_data', JSON.stringify(newContact));
       
-      const response = await axios.post(
-        'http://localhost:8000/integrations/hubspot/create_contact',
-        formData
-      );
+      const response = await axios.post('http://localhost:8000/integrations/hubspot/create_contact', formData);
       
-      const createdContact = response.data;
-      
-      setIntegrations(prev => ({
-        ...prev,
-        hubspot: {
-          ...prev.hubspot,
-          data: [createdContact, ...prev.hubspot.data],
-          buttonLoading: {
-            ...prev.hubspot.buttonLoading,
-            create: false
-          }
-        }
-      }));
-      
-      setSuccess('Contact created successfully in HubSpot!');
+      setSuccess('Contact created successfully!');
       setCreateContactDialog(false);
       setNewContact({
         firstname: '',
@@ -296,33 +288,82 @@ const DataManagementPage = () => {
         company: ''
       });
       
+      // Refresh the data
+      handleFetchData('hubspot');
+      
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to create contact');
+    } finally {
       setButtonLoading('hubspot', 'create', false);
     }
   };
 
-  const handleFetchAirtableBases = async () => {
+  const handleViewContact = async (contactId) => {
     try {
-      setButtonLoading('airtable', 'create', true);
+      setButtonLoading('hubspot', 'view', true);
       setError(null);
       
-      const credentials = integrations.airtable.credentials;
       const formData = new FormData();
-      formData.append('credentials', JSON.stringify(credentials));
+      formData.append('credentials', JSON.stringify(integrations.hubspot.credentials));
+      formData.append('contact_id', contactId);
       
-      const response = await axios.post(
-        'http://localhost:8000/integrations/airtable/bases',
-        formData
-      );
+      const response = await axios.post('http://localhost:8000/integrations/hubspot/get_contact', formData);
       
-      setAirtableBases(response.data);
-      setCreateRecordDialog(true);
-      setButtonLoading('airtable', 'create', false);
+      setSelectedContact(response.data);
+      setViewContactDialog(true);
       
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to fetch Airtable bases');
-      setButtonLoading('airtable', 'create', false);
+      setError(err.response?.data?.detail || 'Failed to fetch contact');
+    } finally {
+      setButtonLoading('hubspot', 'view', false);
+    }
+  };
+
+  const handleEditContact = async () => {
+    try {
+      setButtonLoading('hubspot', 'edit', true);
+      setError(null);
+      
+      const formData = new FormData();
+      formData.append('credentials', JSON.stringify(integrations.hubspot.credentials));
+      formData.append('contact_id', selectedContact.id);
+      formData.append('contact_data', JSON.stringify(editContact));
+      
+      const response = await axios.post('http://localhost:8000/integrations/hubspot/update_contact', formData);
+      
+      setSuccess('Contact updated successfully!');
+      setEditContactDialog(false);
+      
+      // Refresh the data
+      handleFetchData('hubspot');
+      
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Failed to update contact');
+    } finally {
+      setButtonLoading('hubspot', 'edit', false);
+    }
+  };
+
+  const handleDeleteContact = async (contactId) => {
+    try {
+      setButtonLoading('hubspot', 'delete', true);
+      setError(null);
+      
+      const formData = new FormData();
+      formData.append('credentials', JSON.stringify(integrations.hubspot.credentials));
+      formData.append('contact_id', contactId);
+      
+      const response = await axios.post('http://localhost:8000/integrations/hubspot/delete_contact', formData);
+      
+      setSuccess('Contact deleted successfully!');
+      
+      // Refresh the data
+      handleFetchData('hubspot');
+      
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Failed to delete contact');
+    } finally {
+      setButtonLoading('hubspot', 'delete', false);
     }
   };
 
@@ -331,424 +372,268 @@ const DataManagementPage = () => {
       setButtonLoading('airtable', 'create', true);
       setError(null);
       
-      if (!selectedBase || !selectedTable) {
-        setError('Please select a base and table');
-        setButtonLoading('airtable', 'create', false);
-        return;
-      }
-      
-      const credentials = integrations.airtable.credentials;
       const formData = new FormData();
-      formData.append('credentials', JSON.stringify(credentials));
+      formData.append('credentials', JSON.stringify(integrations.airtable.credentials));
       formData.append('base_id', selectedBase);
       formData.append('table_id', selectedTable);
       formData.append('record_data', JSON.stringify(newRecord));
       
-      const response = await axios.post(
-        'http://localhost:8000/integrations/airtable/create_record',
-        formData
-      );
+      const response = await axios.post('http://localhost:8000/integrations/airtable/create_record', formData);
       
-      const createdRecord = response.data;
-      
-      setIntegrations(prev => ({
-        ...prev,
-        airtable: {
-          ...prev.airtable,
-          data: [createdRecord, ...prev.airtable.data],
-          buttonLoading: {
-            ...prev.airtable.buttonLoading,
-            create: false
-          }
-        }
-      }));
-      
-      setSuccess('Record created successfully in Airtable!');
+      setSuccess('Record created successfully!');
       setCreateRecordDialog(false);
       setNewRecord({
         Name: '',
         Description: '',
         Status: 'Active'
       });
-      setSelectedBase('');
-      setSelectedTable('');
+      
+      // Refresh the data
+      handleFetchData('airtable');
       
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to create record');
+    } finally {
       setButtonLoading('airtable', 'create', false);
     }
   };
 
-  const handleViewContact = async (contact) => {
+  const loadAirtableBases = async () => {
     try {
-      setButtonLoading('hubspot', 'view', true);
-      setError(null);
-      
-      const credentials = integrations.hubspot.credentials;
       const formData = new FormData();
-      formData.append('credentials', JSON.stringify(credentials));
-      formData.append('contact_id', contact.id);
+      formData.append('credentials', JSON.stringify(integrations.airtable.credentials));
       
-      const response = await axios.post(
-        'http://localhost:8000/integrations/hubspot/get_contact',
-        formData
-      );
-      
-      setSelectedContact(response.data);
-      setViewContactDialog(true);
-      setButtonLoading('hubspot', 'view', false);
-      
+      const response = await axios.post('http://localhost:8000/integrations/airtable/bases', formData);
+      setAirtableBases(response.data);
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to fetch contact details');
-      setButtonLoading('hubspot', 'view', false);
+      setError(err.response?.data?.detail || 'Failed to load Airtable bases');
     }
   };
 
-  const handleEditContact = (contact) => {
-    setSelectedContact(contact);
-    setEditContact({
-      firstname: contact.properties?.firstname || '',
-      lastname: contact.properties?.lastname || '',
-      email: contact.properties?.email || '',
-      phone: contact.properties?.phone || '',
-      company: contact.properties?.company || ''
-    });
-    setEditContactDialog(true);
-  };
-
-  const handleUpdateContact = async () => {
-    try {
-      setButtonLoading('hubspot', 'edit', true);
-      setError(null);
-      
-      const credentials = integrations.hubspot.credentials;
-      const formData = new FormData();
-      formData.append('credentials', JSON.stringify(credentials));
-      formData.append('contact_id', selectedContact.id);
-      formData.append('contact_data', JSON.stringify(editContact));
-      
-      const response = await axios.post(
-        'http://localhost:8000/integrations/hubspot/update_contact',
-        formData
-      );
-      
-      const updatedContact = response.data;
-      
-      setIntegrations(prev => ({
-        ...prev,
-        hubspot: {
-          ...prev.hubspot,
-          data: prev.hubspot.data.map(contact => 
-            contact.id === selectedContact.id ? updatedContact : contact
-          ),
-          buttonLoading: {
-            ...prev.hubspot.buttonLoading,
-            edit: false
-          }
-        }
-      }));
-      
-      setSuccess('Contact updated successfully!');
-      setEditContactDialog(false);
-      setSelectedContact(null);
-      
-    } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to update contact');
-      setButtonLoading('hubspot', 'edit', false);
-    }
-  };
-
-  const handleDeleteContact = async (contact) => {
-    if (!window.confirm(`Are you sure you want to delete ${contact.name}?`)) {
-      return;
-    }
-    
-    try {
-      setButtonLoading('hubspot', 'delete', true);
-      setError(null);
-      
-      const credentials = integrations.hubspot.credentials;
-      const formData = new FormData();
-      formData.append('credentials', JSON.stringify(credentials));
-      formData.append('contact_id', contact.id);
-      
-      await axios.post(
-        'http://localhost:8000/integrations/hubspot/delete_contact',
-        formData
-      );
-      
-      setIntegrations(prev => ({
-        ...prev,
-        hubspot: {
-          ...prev.hubspot,
-          data: prev.hubspot.data.filter(c => c.id !== contact.id),
-          buttonLoading: {
-            ...prev.hubspot.buttonLoading,
-            delete: false
-          }
-        }
-      }));
-      
-      setSuccess('Contact deleted successfully!');
-      
-    } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to delete contact');
-      setButtonLoading('hubspot', 'delete', false);
-    }
-  };
-
-  const formatDate = (dateString) => {
-    if (!dateString) return 'N/A';
-    return new Date(dateString).toLocaleDateString();
-  };
-
-  const renderDataTable = (data, integrationType) => {
-    if (!data || data.length === 0) {
-      return (
-        <Box textAlign="center" py={4}>
-          <Typography variant="body2" color="text.secondary">
-            No data available. Click "Fetch Data" to load items.
-          </Typography>
-        </Box>
-      );
-    }
-
-    return (
-      <TableContainer component={Paper} sx={{ mt: 2 }}>
-        <Table>
-          <TableHead>
-            <TableRow>
-              <TableCell>ID</TableCell>
-              <TableCell>Name</TableCell>
-              <TableCell>Type</TableCell>
-              <TableCell>Created</TableCell>
-              <TableCell>Modified</TableCell>
-              <TableCell>Actions</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {data.map((item, index) => (
-              <TableRow key={item.id || index}>
-                <TableCell>
-                  <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                    {item.id?.substring(0, 8) || 'N/A'}...
-                  </Typography>
-                </TableCell>
-                <TableCell>
-                  <Typography variant="body2" fontWeight="medium">
-                    {item.name || 'Unnamed'}
-                  </Typography>
-                </TableCell>
-                <TableCell>
-                  <Chip 
-                    label={item.type || 'Unknown'} 
-                    size="small" 
-                    color="primary"
-                    variant="outlined"
-                  />
-                </TableCell>
-                <TableCell>{formatDate(item.creation_time)}</TableCell>
-                <TableCell>{formatDate(item.last_modified_time)}</TableCell>
-                <TableCell>
-                  <Stack direction="row" spacing={1}>
-                    <Tooltip title="View Details">
-                      <IconButton 
-                        size="small" 
-                        onClick={() => handleViewContact(item)}
-                        disabled={isButtonLoading('hubspot', 'view')}
-                      >
-                        <VisibilityIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title="Edit">
-                      <IconButton 
-                        size="small" 
-                        onClick={() => handleEditContact(item)}
-                        disabled={isButtonLoading('hubspot', 'edit')}
-                      >
-                        <EditIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title="Delete">
-                      <IconButton 
-                        size="small" 
-                        color="error"
-                        onClick={() => handleDeleteContact(item)}
-                        disabled={isButtonLoading('hubspot', 'delete')}
-                      >
-                        <DeleteIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                  </Stack>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </TableContainer>
-    );
+  const clearMessages = () => {
+    setError(null);
+    setSuccess(null);
   };
 
   return (
-    <Box sx={{ maxWidth: 1200, mx: 'auto' }}>
-      <Typography variant="h4" gutterBottom sx={{ fontWeight: 'bold', mb: 4 }}>
-        Integration Data Management
-      </Typography>
-      
+    <Box sx={{ p: 3 }}>
+      {/* User Input Section */}
+      <Box sx={{ mb: 3, p: 2, bgcolor: 'grey.50', borderRadius: 2 }}>
+        <Typography variant="h6" gutterBottom>
+          User Configuration
+        </Typography>
+        <Grid container spacing={2}>
+          <Grid item xs={12} sm={6}>
+            <TextField
+              fullWidth
+              label="User ID"
+              value={user}
+              onChange={(e) => setUser(e.target.value)}
+              variant="outlined"
+              size="small"
+            />
+          </Grid>
+          <Grid item xs={12} sm={6}>
+            <TextField
+              fullWidth
+              label="Organization ID"
+              value={org}
+              onChange={(e) => setOrg(e.target.value)}
+              variant="outlined"
+              size="small"
+            />
+          </Grid>
+        </Grid>
+      </Box>
+
+      {/* Error and Success Messages */}
       {error && (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+        <Alert severity="error" onClose={clearMessages} sx={{ mb: 2 }}>
           {error}
         </Alert>
       )}
-      
       {success && (
-        <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>
+        <Alert severity="success" onClose={clearMessages} sx={{ mb: 2 }}>
           {success}
         </Alert>
       )}
 
+      {/* Integration Cards */}
       <Grid container spacing={3}>
-        {Object.entries(integrations).map(([key, integration]) => {
-          const config = integrationConfig[key];
-          return (
-            <Grid item xs={12} md={4} key={key}>
-              <Card 
-                sx={{ 
-                  height: '100%',
-                  border: integration.connected ? `2px solid ${config.color}` : '1px solid #e0e0e0',
-                  transition: 'all 0.3s ease'
-                }}
-              >
-                <CardContent>
-                  <Box display="flex" alignItems="center" mb={2}>
-                    <Avatar sx={{ bgcolor: config.color, mr: 2 }}>
-                      {config.icon}
-                    </Avatar>
-                    <Box>
-                      <Typography variant="h6" fontWeight="bold">
-                        {config.name}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        {config.description}
-                      </Typography>
-                    </Box>
+        {Object.entries(integrationConfig).map(([key, config]) => (
+          <Grid item xs={12} md={4} key={key}>
+            <Card sx={{ height: '100%' }}>
+              <CardContent>
+                <Box display="flex" alignItems="center" mb={2}>
+                  <Avatar sx={{ bgcolor: config.color, mr: 2 }}>
+                    {config.icon}
+                  </Avatar>
+                  <Box>
+                    <Typography variant="h6">{config.name}</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {config.description}
+                    </Typography>
                   </Box>
+                </Box>
 
-                  <Box display="flex" alignItems="center" mb={2}>
-                    <Badge
-                      color={integration.connected ? 'success' : 'default'}
-                      variant="dot"
+                <Box display="flex" alignItems="center" mb={2}>
+                  <Chip
+                    icon={integrations[key].connected ? <CloudDoneIcon /> : <CloudOffIcon />}
+                    label={integrations[key].connected ? 'Connected' : 'Disconnected'}
+                    color={integrations[key].connected ? 'success' : 'default'}
+                    variant="outlined"
+                  />
+                </Box>
+
+                <Stack spacing={1}>
+                  {!integrations[key].connected ? (
+                    <Button
+                      variant="contained"
+                      fullWidth
+                      onClick={() => handleConnect(key)}
+                      disabled={isButtonLoading(key, 'connect')}
+                      startIcon={isButtonLoading(key, 'connect') ? <CircularProgress size={20} /> : null}
                     >
-                      <Chip
-                        icon={integration.connected ? <CloudDoneIcon /> : <CloudOffIcon />}
-                        label={integration.connected ? 'Connected' : 'Disconnected'}
-                        color={integration.connected ? 'success' : 'default'}
-                        variant={integration.connected ? 'filled' : 'outlined'}
-                      />
-                    </Badge>
-                  </Box>
-
-                  <Divider sx={{ my: 2 }} />
-
-                  <Stack spacing={2}>
-                    {!integration.connected ? (
+                      {isButtonLoading(key, 'connect') ? 'Connecting...' : 'Connect'}
+                    </Button>
+                  ) : (
+                    <>
                       <Button
-                        variant="contained"
+                        variant="outlined"
                         fullWidth
-                        onClick={() => handleConnect(key)}
-                        disabled={isButtonLoading(key, 'connect')}
-                        startIcon={isButtonLoading(key, 'connect') ? <CircularProgress size={20} /> : <AddIcon />}
-                        sx={{ bgcolor: config.color, '&:hover': { bgcolor: config.color, opacity: 0.9 } }}
+                        onClick={() => handleFetchData(key)}
+                        disabled={isButtonLoading(key, 'fetch')}
+                        startIcon={isButtonLoading(key, 'fetch') ? <CircularProgress size={20} /> : <RefreshIcon />}
                       >
-                        Connect to {config.name}
+                        {isButtonLoading(key, 'fetch') ? 'Fetching...' : 'Fetch Data'}
                       </Button>
-                    ) : (
-                      <>
-                        <Button
-                          variant="outlined"
-                          fullWidth
-                          onClick={() => handleFetchData(key)}
-                          disabled={isButtonLoading(key, 'fetch')}
-                          startIcon={isButtonLoading(key, 'fetch') ? <CircularProgress size={20} /> : <RefreshIcon />}
-                        >
-                          Fetch Data
-                        </Button>
-                        
-                        {key === 'hubspot' && (
-                          <Button
-                            variant="contained"
-                            fullWidth
-                            onClick={() => setCreateContactDialog(true)}
-                            disabled={isButtonLoading('hubspot', 'create')}
-                            startIcon={<AddIcon />}
-                            sx={{ bgcolor: config.color, '&:hover': { bgcolor: config.color, opacity: 0.9 } }}
-                          >
-                            Create Contact
-                          </Button>
-                        )}
-                        
-                        {key === 'airtable' && (
-                          <Button
-                            variant="contained"
-                            fullWidth
-                            onClick={handleFetchAirtableBases}
-                            disabled={isButtonLoading('airtable', 'create')}
-                            startIcon={<AddIcon />}
-                            sx={{ bgcolor: config.color, '&:hover': { bgcolor: config.color, opacity: 0.9 } }}
-                          >
-                            Create Record
-                          </Button>
-                        )}
-                      </>
-                    )}
+                      <Button
+                        variant="outlined"
+                        color="error"
+                        fullWidth
+                        onClick={() => handleDisconnect(key)}
+                      >
+                        Disconnect
+                      </Button>
+                    </>
+                  )}
+                </Stack>
 
-                    {integration.data.length > 0 && (
-                      <Typography variant="body2" color="text.secondary" textAlign="center">
-                        {integration.data.length} items loaded
-                      </Typography>
-                    )}
-                  </Stack>
-                </CardContent>
-              </Card>
-            </Grid>
-          );
-        })}
+                {/* HubSpot specific actions */}
+                {key === 'hubspot' && integrations[key].connected && (
+                  <Box mt={2}>
+                    <Button
+                      variant="outlined"
+                      fullWidth
+                      onClick={() => setCreateContactDialog(true)}
+                      disabled={isButtonLoading(key, 'create')}
+                      startIcon={<AddIcon />}
+                      sx={{ mb: 1 }}
+                    >
+                      Create Contact
+                    </Button>
+                  </Box>
+                )}
+
+                {/* Airtable specific actions */}
+                {key === 'airtable' && integrations[key].connected && (
+                  <Box mt={2}>
+                    <Button
+                      variant="outlined"
+                      fullWidth
+                      onClick={() => {
+                        loadAirtableBases();
+                        setCreateRecordDialog(true);
+                      }}
+                      disabled={isButtonLoading(key, 'create')}
+                      startIcon={<AddIcon />}
+                    >
+                      Create Record
+                    </Button>
+                  </Box>
+                )}
+              </CardContent>
+            </Card>
+          </Grid>
+        ))}
       </Grid>
 
-      {/* Data Display Section */}
-      {Object.entries(integrations).some(([_, integration]) => integration.connected && integration.data.length > 0) && (
-        <Box sx={{ mt: 4 }}>
-          <Typography variant="h5" gutterBottom sx={{ fontWeight: 'bold' }}>
-            Data Overview
-          </Typography>
-          
-          {Object.entries(integrations).map(([key, integration]) => {
-            if (!integration.connected || integration.data.length === 0) return null;
-            
-            const config = integrationConfig[key];
-            return (
-              <Box key={key} sx={{ mb: 4 }}>
-                <Typography variant="h6" gutterBottom sx={{ color: config.color, fontWeight: 'bold' }}>
-                  {config.name} Data ({integration.data.length} items)
-                </Typography>
-                {renderDataTable(integration.data, key)}
-              </Box>
-            );
-          })}
-        </Box>
-      )}
+      {/* Data Display */}
+      {Object.entries(integrations).map(([key, integration]) => (
+        integration.connected && integration.data.length > 0 && (
+          <Box key={key} mt={4}>
+            <Typography variant="h5" gutterBottom>
+              {integrationConfig[key].name} Data
+            </Typography>
+            <TableContainer component={Paper}>
+              <Table>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>ID</TableCell>
+                    <TableCell>Name</TableCell>
+                    <TableCell>Type</TableCell>
+                    <TableCell>Actions</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {integration.data.map((item, index) => (
+                    <TableRow key={item.id || index}>
+                      <TableCell>{item.id}</TableCell>
+                      <TableCell>{item.name}</TableCell>
+                      <TableCell>{item.type}</TableCell>
+                      <TableCell>
+                        {key === 'hubspot' && (
+                          <Box>
+                            <IconButton
+                              size="small"
+                              onClick={() => handleViewContact(item.id)}
+                              disabled={isButtonLoading(key, 'view')}
+                            >
+                              <VisibilityIcon />
+                            </IconButton>
+                            <IconButton
+                              size="small"
+                              onClick={() => {
+                                setSelectedContact(item);
+                                // Populate edit form with existing data
+                                setEditContact({
+                                  firstname: item.properties?.firstname || '',
+                                  lastname: item.properties?.lastname || '',
+                                  email: item.properties?.email || '',
+                                  phone: item.properties?.phone || '',
+                                  company: item.properties?.company || ''
+                                });
+                                setEditContactDialog(true);
+                              }}
+                              disabled={isButtonLoading(key, 'edit')}
+                            >
+                              <EditIcon />
+                            </IconButton>
+                            <IconButton
+                              size="small"
+                              onClick={() => handleDeleteContact(item.id)}
+                              disabled={isButtonLoading(key, 'delete')}
+                            >
+                              <DeleteIcon />
+                            </IconButton>
+                          </Box>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Box>
+        )
+      ))}
 
       {/* Create Contact Dialog */}
-      <Dialog 
-        open={createContactDialog} 
-        onClose={() => setCreateContactDialog(false)}
-        maxWidth="sm"
-        fullWidth
-      >
-        <DialogTitle>Create New HubSpot Contact</DialogTitle>
+      <Dialog open={createContactDialog} onClose={() => setCreateContactDialog(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Create New Contact</DialogTitle>
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
-            <Grid item xs={6}>
+            <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
                 label="First Name"
@@ -756,7 +641,7 @@ const DataManagementPage = () => {
                 onChange={(e) => setNewContact(prev => ({ ...prev, firstname: e.target.value }))}
               />
             </Grid>
-            <Grid item xs={6}>
+            <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
                 label="Last Name"
@@ -773,7 +658,7 @@ const DataManagementPage = () => {
                 onChange={(e) => setNewContact(prev => ({ ...prev, email: e.target.value }))}
               />
             </Grid>
-            <Grid item xs={6}>
+            <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
                 label="Phone"
@@ -781,7 +666,7 @@ const DataManagementPage = () => {
                 onChange={(e) => setNewContact(prev => ({ ...prev, phone: e.target.value }))}
               />
             </Grid>
-            <Grid item xs={6}>
+            <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
                 label="Company"
@@ -793,152 +678,61 @@ const DataManagementPage = () => {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setCreateContactDialog(false)}>Cancel</Button>
-          <Button 
-            onClick={handleCreateContact} 
+          <Button
+            onClick={handleCreateContact}
             variant="contained"
-            disabled={isButtonLoading('hubspot', 'create') || !newContact.firstname || !newContact.lastname}
+            disabled={isButtonLoading('hubspot', 'create')}
           >
-            {isButtonLoading('hubspot', 'create') ? <CircularProgress size={20} /> : 'Create Contact'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Create Airtable Record Dialog */}
-      <Dialog 
-        open={createRecordDialog} 
-        onClose={() => setCreateRecordDialog(false)}
-        maxWidth="md"
-        fullWidth
-      >
-        <DialogTitle>Create New Airtable Record</DialogTitle>
-        <DialogContent>
-          <Grid container spacing={2} sx={{ mt: 1 }}>
-            <Grid item xs={12}>
-              <FormControl fullWidth>
-                <InputLabel>Select Base</InputLabel>
-                <Select
-                  value={selectedBase}
-                  onChange={(e) => {
-                    setSelectedBase(e.target.value);
-                    setSelectedTable(''); // Reset table selection
-                  }}
-                  label="Select Base"
-                >
-                  {Object.entries(airtableBases).map(([baseId, base]) => (
-                    <MenuItem key={baseId} value={baseId}>
-                      {base.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            
-            <Grid item xs={12}>
-              <FormControl fullWidth disabled={!selectedBase}>
-                <InputLabel>Select Table</InputLabel>
-                <Select
-                  value={selectedTable}
-                  onChange={(e) => setSelectedTable(e.target.value)}
-                  label="Select Table"
-                >
-                  {selectedBase && airtableBases[selectedBase]?.tables.map((table) => (
-                    <MenuItem key={table.id} value={table.id}>
-                      {table.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Name"
-                value={newRecord.Name}
-                onChange={(e) => setNewRecord(prev => ({ ...prev, Name: e.target.value }))}
-                required
-              />
-            </Grid>
-            
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Description"
-                multiline
-                rows={3}
-                value={newRecord.Description}
-                onChange={(e) => setNewRecord(prev => ({ ...prev, Description: e.target.value }))}
-              />
-            </Grid>
-            
-            <Grid item xs={12}>
-              <FormControl fullWidth>
-                <InputLabel>Status</InputLabel>
-                <Select
-                  value={newRecord.Status}
-                  onChange={(e) => setNewRecord(prev => ({ ...prev, Status: e.target.value }))}
-                  label="Status"
-                >
-                  <MenuItem value="Active">Active</MenuItem>
-                  <MenuItem value="Inactive">Inactive</MenuItem>
-                  <MenuItem value="Pending">Pending</MenuItem>
-                  <MenuItem value="Completed">Completed</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-          </Grid>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setCreateRecordDialog(false)}>Cancel</Button>
-          <Button 
-            onClick={handleCreateRecord} 
-            variant="contained"
-            disabled={isButtonLoading('airtable', 'create') || !selectedBase || !selectedTable || !newRecord.Name}
-            sx={{ bgcolor: '#18bfff', '&:hover': { bgcolor: '#18bfff', opacity: 0.9 } }}
-          >
-            {isButtonLoading('airtable', 'create') ? <CircularProgress size={20} /> : 'Create Record'}
+            {isButtonLoading('hubspot', 'create') ? 'Creating...' : 'Create'}
           </Button>
         </DialogActions>
       </Dialog>
 
       {/* View Contact Dialog */}
-      <Dialog 
-        open={viewContactDialog} 
-        onClose={() => setViewContactDialog(false)}
-        maxWidth="sm"
-        fullWidth
-      >
+      <Dialog open={viewContactDialog} onClose={() => setViewContactDialog(false)} maxWidth="sm" fullWidth>
         <DialogTitle>Contact Details</DialogTitle>
         <DialogContent>
           {selectedContact && (
             <Grid container spacing={2} sx={{ mt: 1 }}>
-              <Grid item xs={6}>
-                <Typography variant="subtitle2" color="text.secondary">First Name</Typography>
-                <Typography variant="body1">{selectedContact.properties?.firstname || 'N/A'}</Typography>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="First Name"
+                  value={selectedContact.properties?.firstname || ''}
+                  InputProps={{ readOnly: true }}
+                />
               </Grid>
-              <Grid item xs={6}>
-                <Typography variant="subtitle2" color="text.secondary">Last Name</Typography>
-                <Typography variant="body1">{selectedContact.properties?.lastname || 'N/A'}</Typography>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="Last Name"
+                  value={selectedContact.properties?.lastname || ''}
+                  InputProps={{ readOnly: true }}
+                />
               </Grid>
               <Grid item xs={12}>
-                <Typography variant="subtitle2" color="text.secondary">Email</Typography>
-                <Typography variant="body1">{selectedContact.properties?.email || 'N/A'}</Typography>
+                <TextField
+                  fullWidth
+                  label="Email"
+                  value={selectedContact.properties?.email || ''}
+                  InputProps={{ readOnly: true }}
+                />
               </Grid>
-              <Grid item xs={6}>
-                <Typography variant="subtitle2" color="text.secondary">Phone</Typography>
-                <Typography variant="body1">{selectedContact.properties?.phone || 'N/A'}</Typography>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="Phone"
+                  value={selectedContact.properties?.phone || ''}
+                  InputProps={{ readOnly: true }}
+                />
               </Grid>
-              <Grid item xs={6}>
-                <Typography variant="subtitle2" color="text.secondary">Company</Typography>
-                <Typography variant="body1">{selectedContact.properties?.company || 'N/A'}</Typography>
-              </Grid>
-              <Grid item xs={6}>
-                <Typography variant="subtitle2" color="text.secondary">Created</Typography>
-                <Typography variant="body1">{formatDate(selectedContact.creation_time)}</Typography>
-              </Grid>
-              <Grid item xs={6}>
-                <Typography variant="subtitle2" color="text.secondary">Modified</Typography>
-                <Typography variant="body1">{formatDate(selectedContact.last_modified_time)}</Typography>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="Company"
+                  value={selectedContact.properties?.company || ''}
+                  InputProps={{ readOnly: true }}
+                />
               </Grid>
             </Grid>
           )}
@@ -949,16 +743,11 @@ const DataManagementPage = () => {
       </Dialog>
 
       {/* Edit Contact Dialog */}
-      <Dialog 
-        open={editContactDialog} 
-        onClose={() => setEditContactDialog(false)}
-        maxWidth="sm"
-        fullWidth
-      >
+      <Dialog open={editContactDialog} onClose={() => setEditContactDialog(false)} maxWidth="sm" fullWidth>
         <DialogTitle>Edit Contact</DialogTitle>
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
-            <Grid item xs={6}>
+            <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
                 label="First Name"
@@ -966,7 +755,7 @@ const DataManagementPage = () => {
                 onChange={(e) => setEditContact(prev => ({ ...prev, firstname: e.target.value }))}
               />
             </Grid>
-            <Grid item xs={6}>
+            <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
                 label="Last Name"
@@ -983,7 +772,7 @@ const DataManagementPage = () => {
                 onChange={(e) => setEditContact(prev => ({ ...prev, email: e.target.value }))}
               />
             </Grid>
-            <Grid item xs={6}>
+            <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
                 label="Phone"
@@ -991,7 +780,7 @@ const DataManagementPage = () => {
                 onChange={(e) => setEditContact(prev => ({ ...prev, phone: e.target.value }))}
               />
             </Grid>
-            <Grid item xs={6}>
+            <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
                 label="Company"
@@ -1003,13 +792,86 @@ const DataManagementPage = () => {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setEditContactDialog(false)}>Cancel</Button>
-          <Button 
-            onClick={handleUpdateContact} 
+          <Button
+            onClick={handleEditContact}
             variant="contained"
-            disabled={isButtonLoading('hubspot', 'edit') || !editContact.firstname || !editContact.lastname}
-            sx={{ bgcolor: '#ff7a59', '&:hover': { bgcolor: '#ff7a59', opacity: 0.9 } }}
+            disabled={isButtonLoading('hubspot', 'edit')}
           >
-            {isButtonLoading('hubspot', 'edit') ? <CircularProgress size={20} /> : 'Update Contact'}
+            {isButtonLoading('hubspot', 'edit') ? 'Updating...' : 'Update'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Create Record Dialog */}
+      <Dialog open={createRecordDialog} onClose={() => setCreateRecordDialog(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Create New Record</DialogTitle>
+        <DialogContent>
+          <Grid container spacing={2} sx={{ mt: 1 }}>
+            <Grid item xs={12}>
+              <FormControl fullWidth>
+                <InputLabel>Base</InputLabel>
+                <Select
+                  value={selectedBase}
+                  onChange={(e) => setSelectedBase(e.target.value)}
+                >
+                  {Object.entries(airtableBases).map(([baseId, baseName]) => (
+                    <MenuItem key={baseId} value={baseId}>{baseName}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12}>
+              <FormControl fullWidth>
+                <InputLabel>Table</InputLabel>
+                <Select
+                  value={selectedTable}
+                  onChange={(e) => setSelectedTable(e.target.value)}
+                  disabled={!selectedBase}
+                >
+                  {selectedBase && airtableBases[selectedBase] && 
+                    Object.entries(airtableBases[selectedBase]).map(([tableId, tableName]) => (
+                      <MenuItem key={tableId} value={tableId}>{tableName}</MenuItem>
+                    ))
+                  }
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="Name"
+                value={newRecord.Name}
+                onChange={(e) => setNewRecord(prev => ({ ...prev, Name: e.target.value }))}
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="Description"
+                multiline
+                rows={3}
+                value={newRecord.Description}
+                onChange={(e) => setNewRecord(prev => ({ ...prev, Description: e.target.value }))}
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="Status"
+                value={newRecord.Status}
+                onChange={(e) => setNewRecord(prev => ({ ...prev, Status: e.target.value }))}
+              />
+            </Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCreateRecordDialog(false)}>Cancel</Button>
+          <Button
+            onClick={handleCreateRecord}
+            variant="contained"
+            disabled={isButtonLoading('airtable', 'create') || !selectedBase || !selectedTable}
+          >
+            {isButtonLoading('airtable', 'create') ? 'Creating...' : 'Create'}
           </Button>
         </DialogActions>
       </Dialog>

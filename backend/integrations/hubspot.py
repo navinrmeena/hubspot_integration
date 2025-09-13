@@ -1,4 +1,3 @@
-
 import os
 import json
 import secrets
@@ -78,25 +77,36 @@ async def oauth2callback_hubspot(request: Request):
                 error_detail = response.text
                 try:
                     error_json = response.json()
-                    error_detail = error_json.get('message', error_detail)
+                    error_detail = error_json.get('error_description', error_json.get('error', error_detail))
                 except:
                     pass
                 raise HTTPException(status_code=400, detail=f'Token exchange failed: {error_detail}')
+            
             token_data = response.json()
-            if 'access_token' not in token_data:
-                raise HTTPException(status_code=400, detail='No access token in response')
-            await add_key_value_redis(f'hubspot_credentials:{org_id}:{user_id}', json.dumps(token_data), expire=3600)
-        except httpx.HTTPError as e:
-            raise HTTPException(status_code=500, detail=f'HTTP error during token exchange: {str(e)}')
+            credentials = {
+                'access_token': token_data.get('access_token'),
+                'refresh_token': token_data.get('refresh_token'),
+                'expires_in': token_data.get('expires_in')
+            }
+            await add_key_value_redis(f'hubspot_credentials:{org_id}:{user_id}', json.dumps(credentials), expire=3600)
+            
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=500, detail=f'Request failed: {str(e)}')
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f'Unexpected error during token exchange: {str(e)}')
+            raise HTTPException(status_code=500, detail=f'Unexpected error: {str(e)}')
+
     close_window_script = """
     <html>
-        <script>
-            window.close();
-        </script>
+        <head><title>Authorization Complete</title></head>
+        <body>
+            <h2>Authorization Complete</h2>
+            <p>You can close this window and return to the application.</p>
+            <script>
+                window.close();
+            </script>
+        </body>
     </html>
-    """
+"""
     return HTMLResponse(content=close_window_script)
 
 async def get_hubspot_credentials(user_id, org_id):
@@ -122,6 +132,7 @@ def create_integration_item_metadata_object(response_json):
         creation_time=response_json.get('createdAt', None),
         last_modified_time=response_json.get('updatedAt', None),
         parent_id=None,
+        properties=response_json.get('properties', {})
     )
     return integration_item_metadata
 
@@ -153,17 +164,15 @@ async def create_contact_hubspot(credentials, contact_data) -> IntegrationItem:
         'Content-Type': 'application/json'
     }
     
-    # Prepare contact properties
-    properties = {
-        'firstname': contact_data.get('firstname', ''),
-        'lastname': contact_data.get('lastname', ''),
-        'email': contact_data.get('email', ''),
-        'phone': contact_data.get('phone', ''),
-        'company': contact_data.get('company', '')
-    }
-    
+    # Prepare the contact data in HubSpot format
     payload = {
-        'properties': {k: v for k, v in properties.items() if v}  # Only include non-empty values
+        'properties': {
+            'firstname': contact_data.get('firstname', ''),
+            'lastname': contact_data.get('lastname', ''),
+            'email': contact_data.get('email', ''),
+            'phone': contact_data.get('phone', ''),
+            'company': contact_data.get('company', '')
+        }
     }
     
     response = requests.post(url, headers=headers, json=payload)
@@ -171,7 +180,14 @@ async def create_contact_hubspot(credentials, contact_data) -> IntegrationItem:
     if response.status_code == 201:
         result = response.json()
         # Create IntegrationItem from the created contact
-        integration_item = create_integration_item_metadata_object(result)
+        integration_item = IntegrationItem(
+            id=result.get('id', ''),
+            type='contact',
+            name=f"{contact_data.get('firstname', '')} {contact_data.get('lastname', '')}".strip(),
+            creation_time=result.get('createdAt', None),
+            last_modified_time=result.get('updatedAt', None),
+            properties=result.get('properties', {})
+        )
         return integration_item
     else:
         print(f'Error creating HubSpot contact: {response.text}')
@@ -183,16 +199,21 @@ async def get_contact_hubspot(credentials, contact_id) -> IntegrationItem:
     access_token = credentials.get('access_token')
     
     url = f'https://api.hubapi.com/crm/v3/objects/contacts/{contact_id}'
-    headers = {
-        'Authorization': f'Bearer {access_token}',
-        'Content-Type': 'application/json'
-    }
+    headers = {'Authorization': f'Bearer {access_token}'}
     
     response = requests.get(url, headers=headers)
     
     if response.status_code == 200:
         result = response.json()
-        integration_item = create_integration_item_metadata_object(result)
+        # Create IntegrationItem from the contact
+        integration_item = IntegrationItem(
+            id=result.get('id', ''),
+            type='contact',
+            name=f"{result.get('properties', {}).get('firstname', '')} {result.get('properties', {}).get('lastname', '')}".strip(),
+            creation_time=result.get('createdAt', None),
+            last_modified_time=result.get('updatedAt', None),
+            properties=result.get('properties', {})
+        )
         return integration_item
     else:
         print(f'Error fetching HubSpot contact: {response.text}')
@@ -209,24 +230,30 @@ async def update_contact_hubspot(credentials, contact_id, contact_data) -> Integ
         'Content-Type': 'application/json'
     }
     
-    # Prepare contact properties
-    properties = {
-        'firstname': contact_data.get('firstname', ''),
-        'lastname': contact_data.get('lastname', ''),
-        'email': contact_data.get('email', ''),
-        'phone': contact_data.get('phone', ''),
-        'company': contact_data.get('company', '')
-    }
-    
+    # Prepare the contact data in HubSpot format
     payload = {
-        'properties': {k: v for k, v in properties.items() if v}  # Only include non-empty values
+        'properties': {
+            'firstname': contact_data.get('firstname', ''),
+            'lastname': contact_data.get('lastname', ''),
+            'email': contact_data.get('email', ''),
+            'phone': contact_data.get('phone', ''),
+            'company': contact_data.get('company', '')
+        }
     }
     
     response = requests.patch(url, headers=headers, json=payload)
     
     if response.status_code == 200:
         result = response.json()
-        integration_item = create_integration_item_metadata_object(result)
+        # Create IntegrationItem from the updated contact
+        integration_item = IntegrationItem(
+            id=result.get('id', ''),
+            type='contact',
+            name=f"{contact_data.get('firstname', '')} {contact_data.get('lastname', '')}".strip(),
+            creation_time=result.get('createdAt', None),
+            last_modified_time=result.get('updatedAt', None),
+            properties=result.get('properties', {})
+        )
         return integration_item
     else:
         print(f'Error updating HubSpot contact: {response.text}')
@@ -238,10 +265,7 @@ async def delete_contact_hubspot(credentials, contact_id) -> bool:
     access_token = credentials.get('access_token')
     
     url = f'https://api.hubapi.com/crm/v3/objects/contacts/{contact_id}'
-    headers = {
-        'Authorization': f'Bearer {access_token}',
-        'Content-Type': 'application/json'
-    }
+    headers = {'Authorization': f'Bearer {access_token}'}
     
     response = requests.delete(url, headers=headers)
     
